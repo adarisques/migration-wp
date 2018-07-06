@@ -1,9 +1,8 @@
 """Module de migration du site vitrine vers WordPress"""
 
-from .importer import load_table, map_public_files
-from .parser import strip_tags, make_title, make_slug, Parser
+from .importer import Importer
+from .parser import Parser
+from .article import Article
+from .api import API
 
-__ALL__ = [
-    'load_table', 'map_public_files',
-    'strip_tags', 'make_title', 'make_slug', 'Parser'
-]
+__ALL__ = ['Importer', 'Parser', 'Article', 'API']

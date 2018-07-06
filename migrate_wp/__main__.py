@@ -2,54 +2,52 @@
 
 import re
 import locale
-from datetime import datetime
+import configparser
 
 import click
 
-from .importer import load_table
-from .parser import Parser, make_title, make_slug
+from . import Importer, Parser, Article, API
 
 locale.setlocale(locale.LC_ALL, 'fr-FR')
 
 @click.command()
-@click.argument('articles_table', type=click.File('r'))
-@click.argument('public_files_table', type=click.File('r'))
-def main(articles_table, public_files_table):
-    """Fonction principale"""
-    articles = load_table(articles_table, 'ada_articles')
-    public_files = load_table(public_files_table, 'enet_v2_gestion_fichiers_public')
-    parser = Parser(public_files)
+@click.option('-c', '--config', 'config_file', default="config.cfg", type=click.File('r'))
+def main(config_file):
+    """Utilitaire de migration du site vitrine AdA Risques"""
+    config = configparser.ConfigParser()
+    config.read_file(config_file)
 
-    for article in articles:
-        article['id'] = int(article['id'])
-        article['sousRubrique'] = int(article['sousRubrique'])
-        article['rang'] =  article['rang']
+    importer = Importer(config['Database'])
+    parser = Parser(importer.public_files())
 
-    for article in sorted(articles, key=lambda article: (article['sousRubrique'], article['id'])):
-        content = parser.parse_text(article['article'])
-        date = datetime.fromtimestamp(int(article['date']))
+    api = API(config['API'], importer.indexes(), config['Categories'])
+    export = []
+    
+    for cat in importer.categories():
+        export.append(Article(cat))
 
-        (title, _, content) = content.partition('\n')
+    for art in importer.articles():
+        export.append(Article.parse(art, parser))
 
-        title = make_title(title)
-        slug = make_slug(title)
+    for entry in export:
+        click.echo('{0}'.format(entry).encode('utf-8'))
 
-        click.echo('{d:%x} ({a[sousRubrique]:2}/{a[id]})\t{t}'.format(
-            a=article, d=date, t=title, s=slug).encode('utf8'))
-
-        if article['etat'] != "enCours":
-            click.echo(article['etat'])
-
-        for match in re.findall(r"\[/?([a-zA-Z0-9]+)(?:=([^\]]*))?\]", content):
-            click.echo('\t{0}'.format(match))
-
-        if article['sousRubrique'] == 20: # Evenements
-            pass
-        elif article['sousRubrique'] == 43: # Culturisque
-            pass
+        if entry.id in api.indexes:
+            req = api.put(entry)
         else:
-            if article['id'] == 6:
-                click.echo(content)
+            req = api.post(entry)
+
+        if req.status_code not in (200, 201, 204):
+            click.echo(api.json(entry))
+            click.echo("{0.status_code}: {1[message]}".format(req, req.json()))
+            click.echo(req.request.url)
+            return
+
+        # Affiche les tags non traités
+        for match in re.findall(r"\[/?([a-zA-Z0-9]+)(?:=([^\]]*))?\]", entry.content):
+            click.echo('\t{0}'.format(match).encode('utf-8'))
+
+    importer.save_indexes(api.indexes)
 
 if __name__ == '__main__':
     # pylint: disable=no-value-for-parameter
